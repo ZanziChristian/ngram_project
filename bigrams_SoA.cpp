@@ -1,7 +1,11 @@
+//
+// Created by Christian Zanzi on 19/11/24.
+//
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <omp.h>
 
 typedef struct
 {
@@ -36,7 +40,7 @@ BigramOfCharacterArray *createBigramOfCharacterArray()
     BigramOfCharacterArray *bigram_array = (BigramOfCharacterArray *)malloc(sizeof(BigramOfCharacterArray));
     bigram_array->bigrams = (BigramOfCharacter *)malloc(100000 * sizeof(BigramOfCharacter));
     bigram_array->size = 0;
-    bigram_array->capacity = 600;
+    bigram_array->capacity = 1000;
     return bigram_array;
 }
 
@@ -70,7 +74,7 @@ void addBigramOfCharacter(BigramOfCharacterArray *bigram_array, const char ch1, 
 
     if (bigram_array->size >= bigram_array->capacity) {
         // extends the capacity if it reached the limit
-        bigram_array->capacity += 30;
+        bigram_array->capacity += 3000;
         bigram_array->bigrams = (BigramOfCharacter *)realloc(bigram_array->bigrams, bigram_array->capacity * sizeof(BigramOfCharacter));
     }
 
@@ -84,7 +88,7 @@ void addBigramOfCharacter(BigramOfCharacterArray *bigram_array, const char ch1, 
 
 void printBigramsOfCharacters(BigramOfCharacterArray *bigram_array) {
     for (int i = 0; i < bigram_array->size; i++) {
-        if (bigram_array->bigrams[i].frequency > 200)
+        if (bigram_array->bigrams[i].frequency > 15000)
         {
             printf("Bigramma %d: \"%c %c\", Frequenza: %d\n",
                i,
@@ -148,7 +152,7 @@ void addBigram(BigramArray *bigram_array, const char *word1, const char *word2) 
 
 void printBigrams(BigramArray *bigram_array) {
     for (int i = 0; i < bigram_array->size; i++) {
-        if (bigram_array->bigrams[i].frequency > 200)
+        if (bigram_array->bigrams[i].frequency > 700)
         {
             printf("Bigramma %d: \"%s %s\", Frequenza: %d\n",
                   i,
@@ -262,6 +266,9 @@ int main()
         return 1;
     }
 
+    //printf("numero di processori: %d \n", omp_get_num_procs());
+
+    double start_time = omp_get_wtime();
     char* tokens = tokenize(text);
     free(text);
     BigramArray* b_array = createBigramArray();
@@ -281,9 +288,11 @@ int main()
         free(word1);
         free(word2);
     }
-
+    double end_time = omp_get_wtime();
+    printf("Execution time: %f s\n", end_time - start_time);
 
     printBigramsOfCharacters(bc_array);
+    printBigrams(b_array);
     for (int i = 0; i < b_array->size; i++) {
         free(b_array->bigrams[i].word1);
         free(b_array->bigrams[i].word2);
