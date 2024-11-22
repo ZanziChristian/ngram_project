@@ -7,8 +7,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xpreprocessor -fopenmp -lomp")# -ftree-
 include_directories(/opt/homebrew/opt/libomp/include)
 link_directories(/opt/homebrew/opt/libomp/lib)
 
-add_executable(sequential_bigram_AoS bigrams_AoS.cpp)
-add_executable(sequential_bigram_SoA bigrams_SoA.cpp)
+add_executable(sequential_bigram_AoS bigrams_SoA.cpp)
+add_executable(sequential_bigram_SoA bigrams_AoS.cpp)
 add_executable(vectorized_bigram bigrams_vectorization.cpp)
 
 configure_file(mobydick.txt ${CMAKE_BINARY_DIR}/mobydick.txt COPYONLY)

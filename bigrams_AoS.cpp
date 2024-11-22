@@ -1,48 +1,169 @@
 //
 // Created by Christian Zanzi on 19/11/24.
 //
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
 #include <omp.h>
 
 typedef struct
 {
-    char *ch1;
-    char *ch2;
-    int *frequencies;
-    int size;
-} BigramsOfCharacters;
+    char ch1;
+    char ch2;
+    int frequency;
+} BigramOfCharacter;
 
 typedef struct
 {
-    char (*word1)[30];
-    char (*word2)[30];
-    int *frequencies;
+    BigramOfCharacter* bigrams;
     int size;
-} BigramsOfWords;
+    int capacity;
+} BigramOfCharacterArray;
 
-BigramsOfCharacters* createBigramsOfCharacters()
+typedef struct
 {
-    auto *bigramsOfCharacters = (BigramsOfCharacters *)malloc(sizeof(BigramsOfCharacters));
-    bigramsOfCharacters->ch1 = (char *) malloc(1000 * sizeof(char));
-    bigramsOfCharacters->ch2 = (char *) malloc(1000 * sizeof(char));
-    bigramsOfCharacters->frequencies = (int *) malloc(1000 * sizeof(int));
+    char *word1;
+    char *word2;
+    int frequency;
+} Bigram;
 
-    return bigramsOfCharacters;
+typedef struct
+{
+    Bigram* bigrams;
+    int size;
+    int capacity;
+} BigramArray;
+
+BigramOfCharacterArray *createBigramOfCharacterArray()
+{
+    BigramOfCharacterArray *bigram_array = (BigramOfCharacterArray *)malloc(sizeof(BigramOfCharacterArray));
+    bigram_array->bigrams = (BigramOfCharacter *)malloc(100000 * sizeof(BigramOfCharacter));
+    bigram_array->size = 0;
+    bigram_array->capacity = 1000;
+    return bigram_array;
 }
 
-BigramsOfWords* createBigramsOfWords(int length)
-{
-    auto *bigramsOfWords = (BigramsOfWords *)malloc(sizeof(BigramsOfWords));
-    bigramsOfWords->word1 = (char (*)[30]) malloc(length * 50 * sizeof(char));
-    bigramsOfWords->word2 = (char (*)[30]) malloc(length * 50 * sizeof(char));
-    bigramsOfWords->frequencies = (int *) malloc(length * sizeof(int));
+BigramOfCharacter *createBigramOfCharacter(const char ch1, const char ch2) {
+    BigramOfCharacter *bigram = (BigramOfCharacter *)malloc(sizeof(BigramOfCharacter));
+    if (bigram == NULL) {
+        printf("Errore di allocazione memoria per il Bigram\n");
+        return NULL;
+    }
 
-    return bigramsOfWords;
+    bigram->ch1 = ch1;
+    bigram->ch2 = ch2;
+    bigram->frequency = 1;
+    return bigram;
 }
 
+void addBigramOfCharacter(BigramOfCharacterArray *bigram_array, const char ch1, const char ch2) {
+    // Check if the bigram is already in the array
+    bool found = false;
+    if (bigram_array == NULL)
+    {
+        return;
+    }
+    for (int i = 0; i < bigram_array->size; i++) {
+        if (bigram_array->bigrams[i].ch1 == ch1 &&
+            bigram_array->bigrams[i].ch2 == ch2) {
+            bigram_array->bigrams[i].frequency++;
+            found = true;
+            }
+    }
+
+    if (bigram_array->size >= bigram_array->capacity) {
+        // extends the capacity if it reached the limit
+        bigram_array->capacity += 3000;
+        bigram_array->bigrams = (BigramOfCharacter *)realloc(bigram_array->bigrams, bigram_array->capacity * sizeof(BigramOfCharacter));
+    }
+
+    if (!found)
+    {
+        bigram_array->bigrams[bigram_array->size] = *createBigramOfCharacter(ch1, ch2);
+        bigram_array->size++;
+    }
+
+}
+
+void printBigramsOfCharacters(BigramOfCharacterArray *bigram_array) {
+    for (int i = 0; i < bigram_array->size; i++) {
+        if (bigram_array->bigrams[i].frequency > 15000)
+        {
+            printf("Bigramma %d: \"%c %c\", Frequenza: %d\n",
+               i,
+               bigram_array->bigrams[i].ch1,
+               bigram_array->bigrams[i].ch2,
+               bigram_array->bigrams[i].frequency);
+        }
+    }
+}
+
+BigramArray *createBigramArray()
+{
+    BigramArray *bigram_array = (BigramArray *)malloc(sizeof(BigramArray));
+    bigram_array->bigrams = (Bigram *)malloc(100000 * sizeof(Bigram));
+    bigram_array->size = 0;
+    bigram_array->capacity = 100000;
+    return bigram_array;
+}
+
+Bigram *createBigram(const char *word1, const char *word2) {
+    Bigram *bigram = (Bigram *)malloc(sizeof(Bigram));
+    if (bigram == NULL) {
+        printf("Errore di allocazione memoria per il Bigram\n");
+        return NULL;
+    }
+
+    bigram->word1 = strdup(word1); // Duplica le parole
+    bigram->word2 = strdup(word2);
+    bigram->frequency = 1;         // Frequenza iniziale impostata a 1
+    return bigram;
+}
+
+void addBigram(BigramArray *bigram_array, const char *word1, const char *word2) {
+    // Check if the bigram is already in the array
+    bool found = false;
+    if (bigram_array == NULL)
+    {
+        return;
+    }
+    for (int i = 0; i < bigram_array->size; i++) {
+        if (strcmp(bigram_array->bigrams[i].word1, word1) == 0 &&
+            strcmp(bigram_array->bigrams[i].word2, word2) == 0) {
+            bigram_array->bigrams[i].frequency++;
+            found = true;
+            }
+    }
+
+    if (bigram_array->size >= bigram_array->capacity) {
+        // extends the capacity if it reached the limit
+        bigram_array->capacity += 10000;
+        bigram_array->bigrams = (Bigram *)realloc(bigram_array->bigrams, bigram_array->capacity * sizeof(Bigram));
+    }
+
+    if (!found)
+    {
+        bigram_array->bigrams[bigram_array->size] = *createBigram(word1, word2);
+        bigram_array->size++;
+    }
+
+}
+
+void printBigrams(BigramArray *bigram_array) {
+    for (int i = 0; i < bigram_array->size; i++) {
+        if (bigram_array->bigrams[i].frequency > 700)
+        {
+            printf("Bigramma %d: \"%s %s\", Frequenza: %d\n",
+                  i,
+                  bigram_array->bigrams[i].word1,
+                  bigram_array->bigrams[i].word2,
+                  bigram_array->bigrams[i].frequency);
+        }
+    }
+}
+
+// return the length of the document
 long get_file_length(FILE* file) {
     fseek(file, 0, SEEK_END);  // Spostati alla fine del file
     long length = ftell(file);  // Ottieni la posizione del cursore (che è la lunghezza del file)
@@ -89,11 +210,16 @@ char* load_text(const char* filename)
 
     return text;
 }
-
-char (*tokenize(const char *text, int *length))[50]
+/*
+ *
+ * A function that takes an array containing the text of the document and create the tokenization, i. e. an array
+ * in which there are the words written only with alphanumeric characters and every punctuation symbol is
+ * removed.
+ *
+ */
+char* tokenize(const char* text)
 {
-    //char** tokens = (char**) malloc(strlen(text)*sizeof(char*));
-    char (*tokens)[50] = (char (*)[50]) malloc(50 * strlen(text) * sizeof(char));
+    char* tokens = (char*) malloc(strlen(text));
     int idx = 0, start = 0, end = 0;
     // cycle for divide the tokens inside an array
     for (int i=0; i < strlen(text); i++)
@@ -108,22 +234,28 @@ char (*tokenize(const char *text, int *length))[50]
             if ((text[start] > 47 && text[start] < 58) || (text[start] > 64 &&
                 text[start] < 91) || (text[start] > 96 && text[start] < 123))
             {
-                /*strncpy(token, &text[start], end - start + 2);
+                strncpy(token, &text[start], end - start + 2);
                 token[end - start + 1] = ' ';
                 token[end - start + 2] = '\0';
-                tokens[idx] = (char*) malloc(end - start + 1 * sizeof(char));*/
-                strncpy(token, &text[start], end - start + 1);
-                token[end - start + 1] = '\0';
-                strncpy(tokens[idx], token, end - start + 1);
+                strncpy(&tokens[idx], token, end - start + 2);
                 // the token is taken without punctuation and inserted in an array
-                idx++;
+                idx += end - start + 2;
             }
             start = i + 1;
             free(token);
         }
     }
-    *length = idx;
     return tokens;
+}
+
+void findBigramsInAToken(BigramOfCharacterArray *bigram_array, const char *word)
+{
+    if (word == NULL)
+        return;
+    for (int i = 0; i < strlen(word) - 1; i++)
+    {
+        addBigramOfCharacter(bigram_array, word[i], word[i + 1]);
+    }
 }
 
 int main()
@@ -134,121 +266,40 @@ int main()
         return 1;
     }
 
+    //printf("numero di processori: %d \n", omp_get_num_procs());
+
     double start_time = omp_get_wtime();
-    int length = 0;
-    //char** tokens = tokenize(text, &length);
-    char (*tokens)[50] = tokenize(text, &length);
+    char* tokens = tokenize(text);
     free(text);
-    BigramsOfWords* bigrams_of_words = createBigramsOfWords(length);
-    BigramsOfCharacters* bigrams_of_characters = createBigramsOfCharacters();
+    BigramArray* b_array = createBigramArray();
+    BigramOfCharacterArray* bc_array = createBigramOfCharacterArray();
 
-    for (int i = 0; i < length - 1; i++)
+    for (int i = 0; i < strlen(tokens); i++)
     {
+        char* word1 = (char*)malloc(strlen(&tokens[i]));
+        sscanf(&tokens[i], "%s", word1);
+        i += strlen(word1);
+        char* word2 = (char*)malloc(strlen(&tokens[i]));
+        sscanf(&tokens[i], "%s", word2);
 
-        bool bigram_found = false;
+        findBigramsInAToken(bc_array, word1);
 
-        for (int j = 0; j < bigrams_of_words->size; j++)
-        {
-            if (strcmp(bigrams_of_words->word1[j], tokens[i]) == 0 && strcmp(bigrams_of_words->word2[j], tokens[i + 1]) == 0) {
-                bigrams_of_words->frequencies[j]++;
-                bigram_found = true;
-            }
-        }
-
-        if (!bigram_found)
-        {
-            strncpy(bigrams_of_words->word1[bigrams_of_words->size], tokens[i], sizeof(bigrams_of_words->word1[bigrams_of_words->size]));
-            strncpy(bigrams_of_words->word2[bigrams_of_words->size], tokens[i + 1], sizeof(bigrams_of_words->word2[bigrams_of_words->size]));
-            bigrams_of_words->frequencies[bigrams_of_words->size] = 1;
-            bigrams_of_words->size++;
-        }
-
-        for (int y = 0; y < ((int)strlen(tokens[i])-1); y++)
-        {
-            bool ch_found = false;
-            for (int z = 0; z < bigrams_of_characters->size; z++)
-            {
-                //printf("%s %c %c %d \n", tokens[i], tokens[i][y], tokens[i][y+1], ((int)strlen(tokens[i])-1));
-
-                if (bigrams_of_characters->ch1[z] == tokens[i][y] &&
-                    bigrams_of_characters->ch2[z] == tokens[i][y+1])
-                {
-                    bigrams_of_characters->frequencies[z]++;
-                    ch_found = true;
-                }
-            }
-            if (!ch_found)
-            {
-                bigrams_of_characters->ch1[bigrams_of_characters->size] = tokens[i][y];
-                bigrams_of_characters->ch2[bigrams_of_characters->size] = tokens[i][y + 1];
-                bigrams_of_characters->frequencies[bigrams_of_characters->size] = 1;
-                bigrams_of_characters->size++;
-            }
-        }
-
+        addBigram(b_array, word1, word2);
+        free(word1);
+        free(word2);
     }
-    /*
-    for (int x = 0; x < length; x++)
-    {
-        for (int y = 0; y < ((int)strlen(tokens[x])); y++)
-        {
-            bool found = false;
-            for (int z = 0; z < bigrams_of_words->size; z++)
-            {
-                printf("%s %c %c %d \n", tokens[x], tokens[x][y], tokens[x][y+1], ((int)strlen(tokens[x])-1));
-
-                //if (bigrams_of_characters->ch1[y] == bigrams_of_words->word1[x][y] &&
-                //    bigrams_of_characters->ch2[y] == bigrams_of_words->word2[x][y + 1])
-                if (bigrams_of_characters->ch1[z] == tokens[x][y] &&
-                    bigrams_of_characters->ch2[z] == tokens[x][y+1])
-                {
-                    bigrams_of_characters->frequencies[y]++;
-                    found = true;
-                }
-            }
-            if (!found)
-            {
-                //bigrams_of_characters->ch1[bigrams_of_characters->size] = bigrams_of_words->word1[x][y];
-                //bigrams_of_characters->ch2[bigrams_of_characters->size] = bigrams_of_words->word2[x][y + 1];
-                bigrams_of_characters->ch1[bigrams_of_characters->size] = tokens[x][y];
-                bigrams_of_characters->ch2[bigrams_of_characters->size] = tokens[x][y + 1];
-                bigrams_of_characters->frequencies[bigrams_of_characters->size] = 1;
-                bigrams_of_characters->size++;
-            }
-        }
-    }
-    */
-
     double end_time = omp_get_wtime();
-    printf("%lf\n", end_time - start_time);
+    printf("Execution time: %f s\n", end_time - start_time);
 
-    for (int i = 0; i < bigrams_of_characters->size; i++) {
-        if (bigrams_of_characters->frequencies[i] > 15000)
-        {
-            printf("Bigramma %d: \"%c %c\", Frequenza: %d\n",
-               i,
-               bigrams_of_characters->ch1[i],
-               bigrams_of_characters->ch2[i],
-               bigrams_of_characters->frequencies[i]);
-        }
+    printBigramsOfCharacters(bc_array);
+    printBigrams(b_array);
+    for (int i = 0; i < b_array->size; i++) {
+        free(b_array->bigrams[i].word1);
+        free(b_array->bigrams[i].word2);
     }
-
-
-    for (int i = 0; i < bigrams_of_words->size; i++)
-    {
-        if (bigrams_of_words->frequencies[i] > 700)
-            printf("Bigramma %d: \"%s %s\", Frequenza: %d\n", i, bigrams_of_words->word1[i], bigrams_of_words->word2[i], bigrams_of_words->frequencies[i]);
-    }
-
-    //printf("%d \n", length);
     free(tokens);
-    free(bigrams_of_words->word1);
-    free(bigrams_of_words->word2);
-    free(bigrams_of_words->frequencies);
-    free(bigrams_of_words);
-    free(bigrams_of_characters->ch1);
-    free(bigrams_of_characters->ch2);
-    free(bigrams_of_characters->frequencies);
-    free(bigrams_of_characters);
+    free(b_array->bigrams);
+    free(bc_array);
+    free(b_array);
     return 0;
 }
