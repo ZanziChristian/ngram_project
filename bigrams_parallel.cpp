@@ -6,276 +6,275 @@
 #include <string.h>
 #include <ctype.h>
 #include <omp.h>
-#include <thread>
 
-#define NUM_THREADS 8
+#define MAX_WORD_LEN 50
+#define MAX_BIGRAMS 230000
+#define MAX_WORDS 250000
+#define MAX_BIGRAMS_LOCAL 25000
 
-typedef struct
-{
-    char *ch1;
-    char *ch2;
-    int *frequencies;
-    int size;
-} BigramsOfCharacters;
+// --- Strutture globali (SoA) per i bigrammi di parole ---
+char bigram_first[MAX_BIGRAMS][MAX_WORD_LEN];
+char bigram_second[MAX_BIGRAMS][MAX_WORD_LEN];
+int  bigram_count[MAX_BIGRAMS];
+int  global_bigram_size = 0;
 
-typedef struct
-{
-    char (*word1)[50];
-    char (*word2)[50];
-    int *frequencies;
-    int size;
-} BigramsOfWords;
+// Struttura per memorizzare i risultati locali di ciascun worker
+typedef struct {
+    // Bigrammi di parole (SoA)
+    char local_bigram_first[MAX_BIGRAMS_LOCAL][MAX_WORD_LEN];
+    char local_bigram_second[MAX_BIGRAMS_LOCAL][MAX_WORD_LEN];
+    int local_bigram_count[MAX_BIGRAMS_LOCAL];
+    int local_bigram_size;
+    // Bigrammi di caratteri (SoA)
+    char local_char_bigram_first[MAX_BIGRAMS_LOCAL];
+    char local_char_bigram_second[MAX_BIGRAMS_LOCAL];
+    int local_char_bigram_count[MAX_BIGRAMS_LOCAL];
+    int local_char_bigram_size;
+} LocalResults;
 
-BigramsOfCharacters* createBigramsOfCharacters()
-{
-    auto *bigramsOfCharacters = (BigramsOfCharacters *)malloc(sizeof(BigramsOfCharacters));
-    bigramsOfCharacters->ch1 = (char *) malloc(1000 * sizeof(char));
-    bigramsOfCharacters->ch2 = (char *) malloc(1000 * sizeof(char));
-    bigramsOfCharacters->frequencies = (int *) malloc(1000 * sizeof(int));
+// --- Strutture globali (SoA) per i bigrammi di caratteri ---
+char char_bigram_first[MAX_BIGRAMS];
+char char_bigram_second[MAX_BIGRAMS];
+int  char_bigram_count[MAX_BIGRAMS];
+int  global_char_bigram_size = 0;
 
-    return bigramsOfCharacters;
+// Funzione per normalizzare una parola (minuscolo e tronca alla prima punteggiatura/spazio)
+void normalize_word(char *word) {
+    int len = strlen(word);
+    for (int i = 0; i < len; i++) {
+        if (ispunct(word[i]) || isspace(word[i])) {
+            word[i] = '\0';
+            break;
+        }
+        word[i] = tolower(word[i]);
+    }
 }
 
-BigramsOfWords* createBigramsOfWords(int length)
-{
-    auto *bigramsOfWords = (BigramsOfWords *)malloc(sizeof(BigramsOfWords));
-    bigramsOfWords->word1 = (char (*)[50]) malloc(length * 50 * sizeof(char));
-    bigramsOfWords->word2 = (char (*)[50]) malloc(length * 50 * sizeof(char));
-    bigramsOfWords->frequencies = (int *) malloc(length * sizeof(int));
-
-    return bigramsOfWords;
-}
-
-long get_file_length(FILE* file) {
-    fseek(file, 0, SEEK_END);  // Spostati alla fine del file
-    long length = ftell(file);  // Ottieni la posizione del cursore (che è la lunghezza del file)
-    fseek(file, 0, SEEK_SET);  // Ripristina il cursore all'inizio del file
-    return length;
-}
-
-char* load_text(const char* filename)
-{
-    FILE* text_file = fopen(filename, "r, css=UTF-8");
-    if (text_file == NULL)
-    {
-        printf("Could not open file %s\n", filename);
+// Funzione per leggere l'intero contenuto di un file
+char *read_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Errore nell'apertura del file");
         return NULL;
     }
-
-    long file_length = get_file_length(text_file);
-
-    char *text = (char*) malloc((file_length + 1) * sizeof(char));
-
-    if (text == NULL)
-    {
-        printf("Could not allocate memory for text\n");
-        fclose(text_file);
+    fseek(file, 0, SEEK_END);
+    long file_length = ftell(file);
+    rewind(file);
+    char *text = (char *)malloc((file_length + 1) * sizeof(char));
+    if (!text) {
+        perror("Errore nell'allocazione della memoria");
+        fclose(file);
         return NULL;
     }
-
-    int ch;
-    for (int i = 0; i < file_length; i++)
-    {
-        ch = getc(text_file);
-        if (ch >= 32 && ch <= 126) // check the characters and take only the ascii ones from the [space] to the ~
-        {
-            text[i] = (char)tolower(ch);
-        }
-        else
-        {
-            text[i] = 32; // insert a space where a special utf-8 character is found
-        }
-    }
-
-    text[file_length] = '\0';
-    fclose(text_file);
-
+    size_t bytes_read = fread(text, 1, file_length, file);
+    text[bytes_read] = '\0';
+    fclose(file);
     return text;
 }
 
-int main()
-{
-    const char* filename = "mobydick.txt";
-    char* text = load_text(filename);
-    if (text == NULL) {
+// Inizializza una struttura LocalResults
+void init_local_results(LocalResults *lr) {
+    lr->local_bigram_size = 0;
+    lr->local_char_bigram_size = 0;
+    for (int i = 0; i < MAX_BIGRAMS_LOCAL; i++) {
+        lr->local_bigram_count[i] = 0;
+        lr->local_char_bigram_count[i] = 0;
+    }
+}
+
+// Cerca un bigramma di parole nei risultati locali; restituisce l'indice oppure -1 se non trovato
+int local_find_bigram(LocalResults *lr, const char *first, const char *second) {
+    for (int i = 0; i < lr->local_bigram_size; i++) {
+        if (strcmp(lr->local_bigram_first[i], first) == 0 &&
+            strcmp(lr->local_bigram_second[i], second) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Aggiunge (o incrementa) un bigramma di parole nei risultati locali
+void local_add_bigram(LocalResults *lr, const char *first, const char *second) {
+    int index = local_find_bigram(lr, first, second);
+    if (index != -1) {
+        lr->local_bigram_count[index]++;
+    } else {
+        if (lr->local_bigram_size < MAX_BIGRAMS_LOCAL) {
+            strcpy(lr->local_bigram_first[lr->local_bigram_size], first);
+            strcpy(lr->local_bigram_second[lr->local_bigram_size], second);
+            lr->local_bigram_count[lr->local_bigram_size] = 1;
+            lr->local_bigram_size++;
+        }
+    }
+}
+
+// Cerca un bigramma di caratteri nei risultati locali; restituisce l'indice oppure -1 se non trovato
+int local_find_char_bigram(LocalResults *lr, char first, char second) {
+    for (int i = 0; i < lr->local_char_bigram_size; i++) {
+        if (lr->local_char_bigram_first[i] == first &&
+            lr->local_char_bigram_second[i] == second) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Aggiunge (o incrementa) un bigramma di caratteri nei risultati locali
+void local_add_char_bigram(LocalResults *lr, char first, char second) {
+    int index = local_find_char_bigram(lr, first, second);
+    if (index != -1) {
+        lr->local_char_bigram_count[index]++;
+    } else {
+        if (lr->local_char_bigram_size < MAX_BIGRAMS_LOCAL) {
+            lr->local_char_bigram_first[lr->local_char_bigram_size] = first;
+            lr->local_char_bigram_second[lr->local_char_bigram_size] = second;
+            lr->local_char_bigram_count[lr->local_char_bigram_size] = 1;
+            lr->local_char_bigram_size++;
+        }
+    }
+}
+
+// Funzione per il merge dei risultati locali nel set globale (eseguito dal master dopo che tutti i worker hanno finito)
+void merge_local_results(LocalResults *lr) {
+    // Merge dei bigrammi di parole
+    for (int i = 0; i < lr->local_bigram_size; i++) {
+        int found = -1;
+        for (int j = 0; j < global_bigram_size; j++) {
+            if (strcmp(bigram_first[j], lr->local_bigram_first[i]) == 0 &&
+                strcmp(bigram_second[j], lr->local_bigram_second[i]) == 0) {
+                found = j;
+                break;
+            }
+        }
+        if (found != -1) {
+            bigram_count[found] += lr->local_bigram_count[i];
+        } else {
+            if (global_bigram_size < MAX_BIGRAMS) {
+                strcpy(bigram_first[global_bigram_size], lr->local_bigram_first[i]);
+                strcpy(bigram_second[global_bigram_size], lr->local_bigram_second[i]);
+                bigram_count[global_bigram_size] = lr->local_bigram_count[i];
+                global_bigram_size++;
+            }
+        }
+    }
+    // Merge dei bigrammi di caratteri
+    for (int i = 0; i < lr->local_char_bigram_size; i++) {
+        int found = -1;
+        for (int j = 0; j < global_char_bigram_size; j++) {
+            if (char_bigram_first[j] == lr->local_char_bigram_first[i] &&
+                char_bigram_second[j] == lr->local_char_bigram_second[i]) {
+                found = j;
+                break;
+            }
+        }
+        if (found != -1) {
+            char_bigram_count[found] += lr->local_char_bigram_count[i];
+        } else {
+            if (global_char_bigram_size < MAX_BIGRAMS) {
+                char_bigram_first[global_char_bigram_size] = lr->local_char_bigram_first[i];
+                char_bigram_second[global_char_bigram_size] = lr->local_char_bigram_second[i];
+                char_bigram_count[global_char_bigram_size] = lr->local_char_bigram_count[i];
+                global_char_bigram_size++;
+            }
+        }
+    }
+}
+
+int main() {
+    // Lettura e preprocessing del file
+    char *text = read_file("mobydick.txt");
+    if (!text)
         return 1;
+
+    // Sostituisce caratteri non alfanumerici (eccetto lo spazio) con lo spazio
+    char *src = text, *dst = text;
+    while (*src) {
+        if (*src == ' ' || isalnum(*src))
+            *dst++ = *src;
+        else
+            *dst++ = ' ';
+        src++;
+    }
+    *dst = '\0';
+
+    // Tokenizzazione: suddivide il testo in parole
+    char *words[MAX_WORDS];
+    int word_count = 0;
+    char *token = strtok(text, " ");
+    while (token) {
+        normalize_word(token);
+        if (strlen(token) > 0) {
+            words[word_count++] = token;
+        }
+        token = strtok(NULL, " ");
     }
 
     double start_time = omp_get_wtime();
-    long text_length = strlen(text);
-    int segment_per_thread = text_length / NUM_THREADS;
-    char (*tokens)[50] = (char (*)[50]) malloc(50 * text_length * sizeof(char));
-    int total_tokens = 0;
 
-    int chunk_ends[NUM_THREADS];
-    for (int i = 0; i < NUM_THREADS - 1; i++)
-    {
-        int chunk_end = segment_per_thread * (i + 1);
-        while ((text[chunk_end] > 47 && text[chunk_end] < 58)
-            || (text[chunk_end] > 64 && text[chunk_end] < 91)
-            || (text[chunk_end] > 96 && text[chunk_end] < 123))
-        {
-            chunk_end++;
-        }
-        chunk_ends[i] = chunk_end;
+    // Determina il numero di thread e calcola la dimensione omogenea del chunk
+    int num_threads = omp_get_max_threads();
+    int chunk_size = word_count / num_threads;
+    if (word_count % num_threads != 0)
+        chunk_size++; // Assicura che tutti i dati siano coperti
+
+    // Allocazione di un array di LocalResults, uno per ogni thread
+    LocalResults *local_results = (LocalResults *)malloc(num_threads * sizeof(LocalResults));
+    for (int i = 0; i < num_threads; i++) {
+        init_local_results(&local_results[i]);
     }
-    chunk_ends[NUM_THREADS - 1] = text_length;
 
-    int local_length[NUM_THREADS] = {0};
-    #pragma omp parallel for num_threads(NUM_THREADS)
-    for (int thread_id = 0; thread_id < NUM_THREADS; thread_id++) {
-        int start_idx = (thread_id == 0) ? 0 : chunk_ends[thread_id - 1];
-        int end_idx = chunk_ends[thread_id];
-        char *local_text = &text[start_idx];
-
-        char (*local_tokens)[50] = (char (*)[50]) malloc(50 * text_length * sizeof(char));
-        int local_idx = 0;
-
-        // Tokenizzazione del segmento assegnato
-        char *saveptr = NULL;
-        for (char *token = strtok_r(local_text, " ,.!?;:+*-'()[]{}/$%&_", &saveptr);
-             token != NULL && token < &text[end_idx];
-             token = strtok_r(NULL, " ,.!?;:+*-'()[]{}/$%&_", &saveptr)) {
-            strncpy(local_tokens[local_idx], token, strlen(token));
-            local_idx++;
-        }
-        /*for (int i = thread_id - 1; i < NUM_THREADS - 1; i++)
-        {
-            local_length[i] += local_idx;
-
-        }
-        printf("Thread #%d - %d\n", thread_id, local_length[thread_id]);*/
-
-        // Copia locale nella memoria globale
-        #pragma omp critical
-        {
-            for (int i = 0; i < NUM_THREADS - 1; i++)
-            {
-                local_length[i] = local_length[i - 1];
-
-            }
-
-            int start = total_tokens;
-            printf("%d, start: %d, local_idx: %d\n", thread_id, local_length[thread_id], local_idx);
-            memcpy(&tokens[local_length[thread_id]], local_tokens, local_idx * sizeof(char));
-            /*for (int i = 0; i < local_idx; i++) {
-                strncpy(tokens[start + i], local_tokens[i], strlen(local_tokens[i]));
-            }*/
-            total_tokens += local_idx;
-        }
-
-        free(local_tokens);
-    }
-    /*#pragma omp parallel num_threads(NUM_THREADS)
+    // Fase parallela: ciascun worker elabora il proprio chunk in base all'indice del thread
+    #pragma omp parallel num_threads(num_threads)
     {
+        int tid = omp_get_thread_num();
+        int start_idx = tid * chunk_size;
+        int end_idx = start_idx + chunk_size;
+        if (end_idx > word_count)
+            end_idx = word_count;
 
-        char (*local_tokens)[50] = (char (*)[50]) malloc(50 * text_length * sizeof(char));
-        int thread_id = omp_get_thread_num();
-        char *saveptr = NULL;
-        int local_idx = 0;
-
-        for (char *token = strtok_r(&text[chunk_ends[thread_id - 1]], " ,.!?;:+*-'()[]{}/$%&_", &saveptr);
-             token != NULL && local_idx < chunk_ends[thread_id];
-             token = strtok_r(NULL, " ,.!?;:+*-'()[]{}/$%&_", &saveptr))
-        {
-            strncpy(local_tokens[local_idx], token, strlen(token));
-            local_idx++;
-        }
-
-        local_length[thread_id] = local_idx;
-        #pragma omp barrier
-            int start = 0;
-            for (int j = 0; j < thread_id; j++)
-            {
-                start += local_length[j];
-            }
-            for (int i = 0; i < local_idx; i++)
-            {
-                strncpy(tokens[start + i], local_tokens[i], strlen(local_tokens[i]));
-            }
-            total_tokens += local_idx;
-
-        free(local_tokens);
-    }*/
-
-    free(text);
-    BigramsOfWords* bigrams_of_words = createBigramsOfWords(total_tokens);
-    BigramsOfCharacters* bigrams_of_characters = createBigramsOfCharacters();
-
-    for (int i = 0; i < total_tokens; i++)
-    {
-        bool bigram_found = false;
-        for (int j = 0; j < bigrams_of_words->size; j++)
-        {
-            if (strcmp(bigrams_of_words->word1[j], tokens[i]) == 0 && strcmp(bigrams_of_words->word2[j], tokens[i + 1]) == 0)
-            {
-                bigrams_of_words->frequencies[j]++;
-                bigram_found = true;
+        // Elaborazione del chunk assegnato
+        // Per i bigrammi di parole, si considerano coppie (words[i], words[i+1])
+        for (int i = start_idx; i < end_idx - 1; i++) {
+            local_add_bigram(&local_results[tid], words[i], words[i+1]);
+            // Per la parola corrente, elaborazione dei bigrammi di caratteri
+            int len = strlen(words[i]);
+            for (int k = 0; k < len - 1; k++) {
+                local_add_char_bigram(&local_results[tid], words[i][k], words[i][k+1]);
             }
         }
-
-        if (!bigram_found)
-        {
-            strncpy(bigrams_of_words->word1[bigrams_of_words->size], tokens[i], strlen(tokens[i]));
-            strncpy(bigrams_of_words->word2[bigrams_of_words->size], tokens[i + 1], strlen(tokens[i + 1]));
-            bigrams_of_words->frequencies[bigrams_of_words->size] = 1;
-            bigrams_of_words->size++;
-        }
-
-        for (int y = 0; y < ((int)strlen(tokens[i])-1); y++)
-        {
-            bool ch_found = false;
-            for (int z = 0; z < bigrams_of_characters->size; z++)
-            {
-                //printf("%s %c %c %d \n", tokens[i], tokens[i][y], tokens[i][y+1], ((int)strlen(tokens[i])-1));
-
-                if (bigrams_of_characters->ch1[z] == tokens[i][y] &&
-                    bigrams_of_characters->ch2[z] == tokens[i][y+1])
-                {
-                    bigrams_of_characters->frequencies[z]++;
-                    ch_found = true;
-                }
-            }
-            if (!ch_found)
-            {
-                bigrams_of_characters->ch1[bigrams_of_characters->size] = tokens[i][y];
-                bigrams_of_characters->ch2[bigrams_of_characters->size] = tokens[i][y + 1];
-                bigrams_of_characters->frequencies[bigrams_of_characters->size] = 1;
-                bigrams_of_characters->size++;
+        // Per l'ultimo elemento del chunk (se esiste) elaboriamo solo i bigrammi di caratteri
+        if (end_idx - 1 < word_count) {
+            int len = strlen(words[end_idx - 1]);
+            for (int k = 0; k < len - 1; k++) {
+                local_add_char_bigram(&local_results[tid], words[end_idx - 1][k], words[end_idx - 1][k+1]);
             }
         }
+    } // Fine della fase parallela: tutti i worker hanno terminato la loro elaborazione
 
+    // Il thread master effettua il merge dei risultati locali nelle strutture globali
+    for (int i = 0; i < num_threads; i++) {
+        merge_local_results(&local_results[i]);
     }
 
     double end_time = omp_get_wtime();
-    printf("%lf\n", end_time - start_time);
 
-    for (int i = 0; i < bigrams_of_characters->size; i++) {
-        if (bigrams_of_characters->frequencies[i] > 15000)
-        {
-            printf("Bigramma %d: \"%c %c\", Frequenza: %d\n",
-               i,
-               bigrams_of_characters->ch1[i],
-               bigrams_of_characters->ch2[i],
-               bigrams_of_characters->frequencies[i]);
-        }
+    // Stampa dei risultati: Bigrammi di parole
+    printf("Word Bigrams:\n");
+    for (int i = 0; i < 100; i++) {
+        printf("%s %s: %d\n", bigram_first[i], bigram_second[i], bigram_count[i]);
     }
 
-
-    for (int i = 0; i < bigrams_of_words->size; i++)
-    {
-        if (bigrams_of_words->frequencies[i] > 700)
-            printf("Bigramma %d: \"%s %s\", Frequenza: %d\n", i, bigrams_of_words->word1[i], bigrams_of_words->word2[i], bigrams_of_words->frequencies[i]);
+    // Stampa dei risultati: Bigrammi di caratteri
+    printf("\nCharacter Bigrams:\n");
+    for (int i = 0; i < global_char_bigram_size; i++) {
+        printf("%c %c: %d\n", char_bigram_first[i], char_bigram_second[i], char_bigram_count[i]);
     }
 
-    free(tokens);
-    free(bigrams_of_words->word1);
-    free(bigrams_of_words->word2);
-    free(bigrams_of_words->frequencies);
-    free(bigrams_of_words);
-    free(bigrams_of_characters->ch1);
-    free(bigrams_of_characters->ch2);
-    free(bigrams_of_characters->frequencies);
-    free(bigrams_of_characters);
+    printf("\nBigram size: %d\n",global_bigram_size);
+    printf("\nBigram size: %d\n",global_char_bigram_size);
+    printf("\nExecution Time: %.6f seconds\n", end_time - start_time);
+
+    free(local_results);
+    free(text);
     return 0;
 }

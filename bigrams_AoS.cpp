@@ -1,233 +1,170 @@
 //
 // Created by Christian Zanzi on 19/11/24.
 //
-#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <omp.h>
 
-typedef struct {
-    char ch1;
-    char ch2;
-    int frequency;
-} BigramOfCharacter;
+#define MAX_WORD_LEN 50
+#define MAX_BIGRAMS 52000
 
+// Struttura per memorizzare un bigramma
 typedef struct {
-    BigramOfCharacter* bigrams;
-    int size;
-    int capacity;
-} BigramOfCharacterArray;
-
-typedef struct {
-    char *word1;
-    char *word2;
-    int frequency;
+    char first[MAX_WORD_LEN];
+    char second[MAX_WORD_LEN];
+    int count;
 } Bigram;
 
 typedef struct {
-    Bigram* bigrams;
-    int size;
-    int capacity;
-} BigramArray;
+    char first;
+    char second;
+    int count;
+} CharacterBigram;
 
-BigramOfCharacterArray *createBigramOfCharacterArray() {
-    BigramOfCharacterArray *bigram_array = (BigramOfCharacterArray *)malloc(sizeof(BigramOfCharacterArray));
-    bigram_array->bigrams = (BigramOfCharacter *)malloc(1000 * sizeof(BigramOfCharacter));
-    bigram_array->size = 0;
-    bigram_array->capacity = 1000;
-    return bigram_array;
+// Funzione per trovare un bigramma nell'array
+int find_bigram(Bigram bigrams[], int size, char *first, char *second) {
+    for (int i = 0; i < size; i++) {
+        if (strcmp(bigrams[i].first, first) == 0 && strcmp(bigrams[i].second, second) == 0) {
+            return i;
+        }
+    }
+    return -1;
 }
 
-void addBigramOfCharacter(BigramOfCharacterArray *bigram_array, const char ch1, const char ch2) {
-    if (bigram_array == nullptr) {
-        return;
-    }
-    for (int i = 0; i < bigram_array->size; i++) {
-        if (bigram_array->bigrams[i].ch1 == ch1 &&
-            bigram_array->bigrams[i].ch2 == ch2) {
-            bigram_array->bigrams[i].frequency++;
-            return;
-            }
-    }
-
-    if (bigram_array->size >= bigram_array->capacity) {
-        bigram_array->capacity += 1000;
-        bigram_array->bigrams = (BigramOfCharacter *)realloc(bigram_array->bigrams, bigram_array->capacity * sizeof(BigramOfCharacter));
-    }
-
-    bigram_array->bigrams[bigram_array->size] = (BigramOfCharacter){ch1, ch2, 1};
-    bigram_array->size++;
-}
-
-void printBigramsOfCharacters(BigramOfCharacterArray *bigram_array) {
-    for (int i = 0; i < bigram_array->size; i++) {
-        if (bigram_array->bigrams[i].frequency > 15000)
-        {
-            printf("Bigramma %d: \"%c %c\", Frequenza: %d\n",
-               i,
-               bigram_array->bigrams[i].ch1,
-               bigram_array->bigrams[i].ch2,
-               bigram_array->bigrams[i].frequency);
+// Funzione per aggiungere un bigramma all'array
+void add_bigram(Bigram bigrams[], int *size, char *first, char *second) {
+    int index = find_bigram(bigrams, *size, first, second);
+    if (index != -1) {
+        bigrams[index].count++;
+    } else {
+        if (*size < MAX_BIGRAMS) {
+            strcpy(bigrams[*size].first, first);
+            strcpy(bigrams[*size].second, second);
+            bigrams[*size].count = 1;
+            (*size)++;
         }
     }
 }
 
-BigramArray *createBigramArray() {
-    BigramArray *bigram_array = (BigramArray *)malloc(sizeof(BigramArray));
-    bigram_array->bigrams = (Bigram *)malloc(10000 * sizeof(Bigram));
-    bigram_array->size = 0;
-    bigram_array->capacity = 10000;
-    return bigram_array;
-}
-
-void addBigram(BigramArray *bigram_array, const char *word1, const char *word2) {
-    if (bigram_array == nullptr) return;
-
-    for (int i = 0; i < bigram_array->size; i++) {
-        if (strcmp(bigram_array->bigrams[i].word1, word1) == 0 &&
-            strcmp(bigram_array->bigrams[i].word2, word2) == 0) {
-            bigram_array->bigrams[i].frequency++;
-            return;
+int find_character_bigram(CharacterBigram bigrams[], int size, char first, char second) {
+    for (int i = 0; i < size; i++) {
+        if (bigrams[i].first == first && bigrams[i].second == second) {
+            return i;
         }
     }
-
-    if (bigram_array->size >= bigram_array->capacity) {
-        bigram_array->capacity += 1000;
-        bigram_array->bigrams = (Bigram*)realloc(bigram_array->bigrams, bigram_array->capacity * sizeof(Bigram));
-    }
-
-    bigram_array->bigrams[bigram_array->size] = (Bigram){strdup(word1), strdup(word2), 1};
-    bigram_array->size++;
+    return -1;
 }
 
-void printBigrams(BigramArray *bigram_array) {
-    for (int i = 0; i < bigram_array->size; i++) {
-        if (bigram_array->bigrams[i].frequency > 700) {
-            printf("Bigramma %d: \"%s %s\", Frequenza: %d\n",
-                  i,
-                  bigram_array->bigrams[i].word1,
-                  bigram_array->bigrams[i].word2,
-                  bigram_array->bigrams[i].frequency);
+void add_character_bigram(CharacterBigram bigrams[], int *size, char first, char second) {
+    int index = find_character_bigram(bigrams, *size, first, second);
+    if (index != -1) {
+        bigrams[index].count++;
+    } else {
+        if (*size < MAX_BIGRAMS) {
+            bigrams[*size].first = first;
+            bigrams[*size].second = second;
+            bigrams[*size].count = 1;
+            (*size)++;
         }
     }
 }
 
-char* load_text(const char* filename) {
-    FILE* file = fopen(filename, "r, css=UTF-8");
-    if (file == nullptr) {
-        printf("Could not open file %s\n", filename);
-        return nullptr;
+// Funzione per normalizzare una parola (rimuove la punteggiatura e converte in minuscolo)
+void normalize_word(char *word) {
+    int len = strlen(word);
+
+    for (int i = 0; i < len; i++) {
+        if (ispunct(word[i]) || isspace(word[i])) {
+            word[i] = '\0';
+            break;
+        }
+        word[i] = tolower(word[i]);
+    }
+}
+
+char *read_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Errore nell'apertura del file");
+        return NULL;
     }
 
     fseek(file, 0, SEEK_END);
     long file_length = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    rewind(file);
 
-    char *text = (char*) malloc((file_length + 1) * sizeof(char));
-
-    if (text == nullptr) {
-        printf("Could not allocate memory for text\n");
+    char *text = (char *)malloc((file_length + 1) * sizeof(char));
+    if (!text) {
+        perror("Errore nell'allocazione di memoria");
         fclose(file);
-        return nullptr;
+        return NULL;
     }
 
-    int ch;
-    for (int i = 0; i < file_length; i++) {
-        ch = getc(file);
-        if (ch >= 32 && ch <= 126) // check the characters and take only the ascii ones from the [space] to the ~
-        {
-            text[i] = (char)tolower(ch);
-        }
-        else
-        {
-            text[i] = 32; // insert a space where a special utf-8 character is found
-        }
-    }
+    size_t bytes_read = fread(text, 1, file_length + 1, file);
+    text[bytes_read] = '\0';  // Assicuriamoci che la stringa sia terminata
 
-    text[file_length] = '\0';
     fclose(file);
-
     return text;
 }
-/*
- *
- * A function that takes an array containing the text of the document and create the tokenization, i. e. an array
- * in which there are the words written only with alphanumeric characters and every punctuation symbol is
- * removed.
- *
- */
-char* tokenize(const char* text)
-{
-    char* tokens = (char*) malloc(strlen(text) + 1);
-    int idx = 0;
 
-    for (size_t i = 0; text[i] != '\0'; i++)
-    {
-        if (isalnum(text[i])) {
-            tokens[idx++] = text[i];
+int main() {
+    char *text = read_file("mobydick.txt");
+    if (!text) {
+        return 1;
+    }
+    double start_time = omp_get_wtime();
+    char *src = text, *dst = text;
+    while (*src) {
+        if (*src == ' ' || isalnum(*src)) {
+            *dst++ = *src;
         }
         else {
-            tokens[idx++] = ' ';
+        *dst++ = ' ';
+        }
+        src++;
+    }
+    *dst = '\0';
+
+
+    char *words[300000];
+    int word_count = 0;
+    char *token = strtok(text, " ");
+
+    while (token) {
+        normalize_word(token);
+        if (strlen(token) > 0) {
+            words[word_count++] = token;
+        }
+        token = strtok(NULL, " ");
+    }
+    free(text);
+    free(token);
+
+    Bigram bigrams[MAX_BIGRAMS];
+    CharacterBigram cbigrams[MAX_BIGRAMS];
+    int bigram_count = 0;
+    int cbigram_count = 0;
+
+    for (int i = 0; i < word_count - 1; i++) {
+        add_bigram(bigrams, &bigram_count, words[i], words[i + 1]);
+        for (int j = 0; j < strlen(words[i]) - 1; j++) {
+            add_character_bigram(cbigrams, &cbigram_count, words[i][j], words[i][j + 1]);
         }
     }
-    tokens[idx] = '\0';
-    return tokens;
-}
-
-void findBigramsInAToken(BigramOfCharacterArray *bigram_array, const char *word) {
-    size_t len = strlen(word);
-    for (size_t i = 0; i < len - 1; i++) {
-        addBigramOfCharacter(bigram_array, word[i], word[i + 1]);
-    }
-}
-
-int main()
-{
-    const char* filename = "mobydick.txt";
-    char* text = load_text(filename);
-    if (text == nullptr) {
-        return EXIT_FAILURE;
-    }
-
-    //printf("numero di processori: %d \n", omp_get_num_procs());
-
-    double start_time = omp_get_wtime();
-    char* tokens = tokenize(text);
-    free(text);
-    BigramArray* b_array = createBigramArray();
-    BigramOfCharacterArray* bc_array = createBigramOfCharacterArray();
-
-    char* word1 = strtok(tokens, " ");
-    char* word2 = strtok(nullptr, " ");
-
-    while (word2 != nullptr) {
-        findBigramsInAToken(bc_array, word1);
-        addBigram(b_array, word1, word2);
-
-        word1 = word2;
-        word2 = strtok(nullptr, " ");
-    }
-    findBigramsInAToken(bc_array, word1);
-
     double end_time = omp_get_wtime();
-    printf("Tempo di esecuzione: %.6f secondi\n", end_time - start_time);
 
-    printf("\nBigrammi di caratteri:\n");
-    printBigramsOfCharacters(bc_array);
-
-    printf("\nBigrammi di parole:\n");
-    printBigrams(b_array);
-
-    free(tokens);
-    for (int i = 0; i < b_array->size; i++) {
-        free(b_array->bigrams[i].word1);
-        free(b_array->bigrams[i].word2);
+    printf("Bigrammi trovati:\n");
+    for (int i = 0; i < bigram_count; i++) {
+        printf("%s %s: %d\n", bigrams[i].first, bigrams[i].second, bigrams[i].count);
     }
-    free(b_array->bigrams);
-    free(b_array);
-    free(bc_array->bigrams);
-    free(bc_array);
+    for (int i = 0; i < cbigram_count; i++) {
+        printf("%c %c: %d\n", cbigrams[i].first, cbigrams[i].second, cbigrams[i].count);
+    }
 
-    return EXIT_SUCCESS;
+    printf("Bigram size %d", bigram_count);
+    printf("Bigram size %d", cbigram_count);
+    printf("Tempo di esecuzione: %.6f secondi\n", end_time - start_time);
+    return 0;
 }
