@@ -8,7 +8,8 @@
 
 #define MAX_WORD_LEN 50
 #define MAX_WORDS 900000
-#define NGRAM_SIZE 3
+#define NUM_THREADS 8
+#define NGRAM_SIZE 2
 
 typedef struct {
     char **ngrams;
@@ -144,59 +145,94 @@ int main() {
     double start_time = omp_get_wtime();
 
     text = clean_text(text);
-
     int word_count = 0;
     char **words = tokenize(text, &word_count);
     int character_count = 0;
+    #pragma omp parallel for reduction(+:character_count)
     for (int i = 0; i < word_count; i++) {
         character_count += strlen(words[i]);
     }
 
-    Histogram *histogram = create_histogram(word_count);
-    Histogram *char_histogram = create_histogram(character_count);
+    Histogram *word_ngram = create_histogram(word_count);
+    Histogram *character_ngram = create_histogram(character_count);
 
-    // bigrams of words map phase
-    for (int i = 0; i < word_count - NGRAM_SIZE + 1; i++) {
-        histogram->ngrams[i] = strdup(create_ngram(words, i));
-        histogram->frequencies[i] = 1;
-        histogram->size++;
-    }
+    int word_chunk_size = word_count / NUM_THREADS;
+    if (word_count % NUM_THREADS)
+        word_chunk_size ++;
+    int character_chunk_size = character_count / NUM_THREADS;
+    if (character_count % NUM_THREADS)
+        character_chunk_size ++;
+    Histogram **local_ngrams = malloc(NUM_THREADS * sizeof(Histogram*));
+    Histogram **local_c_ngrams = malloc(NUM_THREADS * sizeof(Histogram*));
 
-    // bigrams of characters map phase
-    for (int i = 0; i < word_count; i++) {
-        for (int j = 0; j < (int)strlen(words[i]) - NGRAM_SIZE + 1; j++) {
-            char_histogram->ngrams[char_histogram->size] = strdup(create_char_ngram(words[i], j));
-            char_histogram->frequencies[char_histogram->size] = 1;
-            char_histogram->size++;
+    #pragma omp parallel num_threads(NUM_THREADS)
+    {
+        int tid = omp_get_thread_num();
+        local_ngrams[tid] = create_histogram(word_chunk_size);
+        local_c_ngrams[tid] = create_histogram(character_chunk_size);
+
+        #pragma omp for
+        for (int i = 0; i < word_count - NGRAM_SIZE; i++) {
+            local_ngrams[tid]->ngrams[local_ngrams[tid]->size] = strdup(create_ngram(words, i));
+            local_ngrams[tid]->frequencies[local_ngrams[tid]->size] = 1;
+            local_ngrams[tid]->size++;
         }
+
+        #pragma omp for
+        for (int i = 0; i < word_count; i++) {
+            for (int j = 0; j < (int)strlen(words[i]) - NGRAM_SIZE + 1; j++) {
+                local_c_ngrams[tid]->ngrams[local_c_ngrams[tid]->size] = strdup(create_char_ngram(words[i], j));
+                local_c_ngrams[tid]->frequencies[local_c_ngrams[tid]->size] = 1;
+                local_c_ngrams[tid]->size++;
+            }
+        }
+
+        qsort_r(local_ngrams[tid]->ngrams, local_ngrams[tid]->size, sizeof(char *), local_ngrams[tid], compare_strings);
+
+        qsort_r(local_c_ngrams[tid]->ngrams, local_c_ngrams[tid]->size, sizeof(char*), local_c_ngrams[tid], compare_strings);
+
+        #pragma omp critical
+        {
+            for (int i = 0; i < local_ngrams[tid]->size; i++) {
+                word_ngram->ngrams[word_ngram->size] = strdup(local_ngrams[tid]->ngrams[i]);
+                word_ngram->frequencies[word_ngram->size] = local_ngrams[tid]->frequencies[i];
+                word_ngram->size++;
+            }
+
+            for (int i = 0; i < local_c_ngrams[tid]->size; i++) {
+                character_ngram->ngrams[character_ngram->size] = strdup(local_c_ngrams[tid]->ngrams[i]);
+                character_ngram->frequencies[character_ngram->size] = local_c_ngrams[tid]->frequencies[i];
+                character_ngram->size++;
+            }
+        }
+
+        free_histogram(local_ngrams[tid]);
+        free_histogram(local_c_ngrams[tid]);
     }
-
     free(words);
-    // bigrams of words sorting
-    qsort_r(histogram->ngrams, histogram->size, sizeof(char *), histogram, compare_strings);
+    free(local_ngrams);
+    free(local_c_ngrams);
 
-    histogram->size = reduce(histogram, histogram, 0);
+    qsort_r(word_ngram->ngrams, word_ngram->size, sizeof(char *), word_ngram, compare_strings);
 
-    // bigrams of characters sorting
-    qsort_r(char_histogram->ngrams, char_histogram->size, sizeof(char*), char_histogram, compare_strings);
+    qsort_r(character_ngram->ngrams, character_ngram->size, sizeof(char*), character_ngram, compare_strings);
 
-    char_histogram->size = reduce(char_histogram, char_histogram, 0);
+    int word_size = reduce(word_ngram, word_ngram, 0);
+    int character_size = reduce(character_ngram, character_ngram, 0);
 
     double end_time = omp_get_wtime();
-    for (int i = 0; i < histogram->size; i++) {
-        if (histogram->frequencies[i] > 10000) {
-            printf("%s %d\n", histogram->ngrams[i], histogram->frequencies[i]);
+    for (int i = 0; i < word_size; i++) {
+        if (word_ngram->frequencies[i] > 10000) {
+            printf("%s %d\n", word_ngram->ngrams[i], word_ngram->frequencies[i]);
         }
     }
-    for (int i = 0; i < char_histogram->size; i++) {
-        if (char_histogram->frequencies[i] > 200000) {
-            printf("%s %d\n", char_histogram->ngrams[i], char_histogram->frequencies[i]);
+    for (int i = 0; i < character_size; i++) {
+        if (character_ngram->frequencies[i] > 200000) {
+            printf("%s %d\n", character_ngram->ngrams[i], character_ngram->frequencies[i]);
         }
     }
     printf("Execution Time: %.6f seconds\n", end_time - start_time);
     free(text);
 
-    free_histogram(histogram);
-    free_histogram(char_histogram);
     return EXIT_SUCCESS;
 }
