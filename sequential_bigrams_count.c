@@ -96,7 +96,7 @@ char **tokenize(char *text, int *word_count) {
         }
         token = strtok_r(NULL, " ", &saveptr);
     }
-    *word_count--;
+    (*word_count)--;
     return words;
 }
 
@@ -123,13 +123,13 @@ int compare_strings(void *ptr, const void *a, const void *b) {
     return strcmp(str1, str2);
 }
 
-int reduce(Histogram *global, const Histogram *local, int index) {
-    for (int i = 0; i < local->size; i++) {
-        if (index != 0 && strcmp(local->ngrams[i], global->ngrams[index - 1]) == 0) {
-            global->frequencies[index - 1] += local->frequencies[i];
+int reduce(Histogram *h1, const Histogram *h2, int index) {
+    for (int i = 0; i < h2->size; i++) {
+        if (index != 0 && strcmp(h2->ngrams[i], h1->ngrams[index - 1]) == 0) {
+            h1->frequencies[index - 1] += h2->frequencies[i];
         } else {
-            global->ngrams[index] = strdup(local->ngrams[i]);
-            global->frequencies[index] = local->frequencies[i];
+            h1->ngrams[index] = strdup(h2->ngrams[i]);
+            h1->frequencies[index] = h2->frequencies[i];
             index++;
         }
     }

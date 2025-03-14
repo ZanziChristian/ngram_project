@@ -97,7 +97,7 @@ char **tokenize(char *text, int *word_count) {
         }
         token = strtok_r(NULL, " ", &saveptr);
     }
-    *word_count--;
+    (*word_count)--;
     return words;
 }
 
@@ -124,13 +124,13 @@ int compare_strings(void *ptr, const void *a, const void *b) {
     return strcmp(str1, str2);
 }
 
-int reduce(Histogram *global, const Histogram *local, int index) {
-    for (int i = 0; i < local->size; i++) {
-        if (index != 0 && strcmp(local->ngrams[i], global->ngrams[index - 1]) == 0) {
-            global->frequencies[index - 1] += local->frequencies[i];
+int combine(Histogram *h1, const Histogram *h2, int index) {
+    for (int i = 0; i < h2->size; i++) {
+        if (index != 0 && strcmp(h2->ngrams[i], h1->ngrams[index - 1]) == 0) {
+            h1->frequencies[index - 1] += h2->frequencies[i];
         } else {
-            global->ngrams[index] = strdup(local->ngrams[i]);
-            global->frequencies[index] = local->frequencies[i];
+            h1->ngrams[index] = strdup(h2->ngrams[i]);
+            h1->frequencies[index] = h2->frequencies[i];
             index++;
         }
     }
@@ -150,7 +150,7 @@ int main() {
     int character_count = 0;
     #pragma omp parallel for reduction(+:character_count)
     for (int i = 0; i < word_count; i++) {
-        character_count += strlen(words[i]);
+        character_count += (int)strlen(words[i]);
     }
 
     Histogram *word_ngram = create_histogram(word_count);
@@ -165,7 +165,7 @@ int main() {
     Histogram **local_ngrams = malloc(NUM_THREADS * sizeof(Histogram*));
     Histogram **local_c_ngrams = malloc(NUM_THREADS * sizeof(Histogram*));
 
-    #pragma omp parallel num_threads(NUM_THREADS)
+    #pragma omp parallel num_threads(NUM_THREADS) default(none) shared(word_ngram, character_ngram, local_ngrams, local_c_ngrams, words, word_count) firstprivate(word_chunk_size, character_chunk_size)
     {
         int tid = omp_get_thread_num();
         local_ngrams[tid] = create_histogram(word_chunk_size);
@@ -188,21 +188,37 @@ int main() {
         }
 
         qsort_r(local_ngrams[tid]->ngrams, local_ngrams[tid]->size, sizeof(char *), local_ngrams[tid], compare_strings);
+        local_ngrams[tid]->size = combine(local_ngrams[tid], local_ngrams[tid], 0);
 
         qsort_r(local_c_ngrams[tid]->ngrams, local_c_ngrams[tid]->size, sizeof(char*), local_c_ngrams[tid], compare_strings);
+        local_c_ngrams[tid]->size = combine(local_c_ngrams[tid], local_c_ngrams[tid], 0);
 
         #pragma omp critical
         {
+            int index =  0;
             for (int i = 0; i < local_ngrams[tid]->size; i++) {
-                word_ngram->ngrams[word_ngram->size] = strdup(local_ngrams[tid]->ngrams[i]);
-                word_ngram->frequencies[word_ngram->size] = local_ngrams[tid]->frequencies[i];
-                word_ngram->size++;
+                if (strcmp(local_ngrams[tid]->ngrams[i], word_ngram->ngrams[index]) == 0) {
+                    word_ngram->frequencies[index] += local_ngrams[tid]->frequencies[i];
+                    index++;
+                }
+                else {
+                    word_ngram->ngrams[word_ngram->size] = strdup(local_ngrams[tid]->ngrams[i]);
+                    word_ngram->frequencies[word_ngram->size] = local_ngrams[tid]->frequencies[i];
+                    word_ngram->size++;
+                }
             }
 
+            int c_index =  0;
             for (int i = 0; i < local_c_ngrams[tid]->size; i++) {
-                character_ngram->ngrams[character_ngram->size] = strdup(local_c_ngrams[tid]->ngrams[i]);
-                character_ngram->frequencies[character_ngram->size] = local_c_ngrams[tid]->frequencies[i];
-                character_ngram->size++;
+                if (strcmp(local_c_ngrams[tid]->ngrams[i], character_ngram->ngrams[c_index]) == 0) {
+                    character_ngram->frequencies[c_index] += local_c_ngrams[tid]->frequencies[i];
+                    c_index++;
+                }
+                else {
+                    character_ngram->ngrams[character_ngram->size] = strdup(local_c_ngrams[tid]->ngrams[i]);
+                    character_ngram->frequencies[character_ngram->size] = local_c_ngrams[tid]->frequencies[i];
+                    character_ngram->size++;
+                }
             }
         }
 
@@ -213,21 +229,15 @@ int main() {
     free(local_ngrams);
     free(local_c_ngrams);
 
-    qsort_r(word_ngram->ngrams, word_ngram->size, sizeof(char *), word_ngram, compare_strings);
-
-    qsort_r(character_ngram->ngrams, character_ngram->size, sizeof(char*), character_ngram, compare_strings);
-
-    int word_size = reduce(word_ngram, word_ngram, 0);
-    int character_size = reduce(character_ngram, character_ngram, 0);
 
     double end_time = omp_get_wtime();
-    for (int i = 0; i < word_size; i++) {
-        if (word_ngram->frequencies[i] > 10000) {
+    for (int i = 0; i < word_ngram->size; i++) {
+        if (word_ngram->frequencies[i] > 1000) {
             printf("%s %d\n", word_ngram->ngrams[i], word_ngram->frequencies[i]);
         }
     }
-    for (int i = 0; i < character_size; i++) {
-        if (character_ngram->frequencies[i] > 200000) {
+    for (int i = 0; i < character_ngram->size; i++) {
+        if (character_ngram->frequencies[i] > 20000) {
             printf("%s %d\n", character_ngram->ngrams[i], character_ngram->frequencies[i]);
         }
     }
